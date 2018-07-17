@@ -28,7 +28,8 @@
   PUBLIC :: epwdata, iundmedata, iunvmedata, iunksdata, iudyn, iukgmap, iuepb,&
             iufilfreq, iufilegnv, iufileph, iufilkqmap, &
             iufilikmap, iueig, iunepmatwp, iunepmatwe, iunkf, iunqf, &
-            iufileig, iukmap, crystal, iunifc, iunimem, iunepmatwp2
+            iufileig, iukmap, crystal, iunifc, iunimem, iunepmatwp2, &
+            iunepmat, iunepmatcb
   PUBLIC :: iuwinfil, iun_plot, iuukk, iuprojfil, iudecayH, iudecayP, &
             iudecaydyn, iudecayv, iummn, iubvec
   PUBLIC :: iufilsigma, iufilseebeck, iufilkappael, iufilkappa, iufilscatt_rate,&
@@ -101,6 +102,8 @@
   INTEGER :: epwdata         = 124  ! EPW data [epwdata.fmt] 
   INTEGER :: iundmedata      = 125  ! Dipole matrix in wannier basis [dmedata.fmt]
   INTEGER :: iunepmatwp2     = 126  ! Opening the epmatwp file
+  INTEGER :: iunepmat        = 127  ! Opening the epmatkq files
+  INTEGER :: iunepmatcb      = 128  ! Opening the epmatkqcb file
   !
   ! Output quantites related to Wannier (201-250)
   !  
