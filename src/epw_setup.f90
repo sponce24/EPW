@@ -21,8 +21,7 @@
   USE io_global,     ONLY : stdout, ionode, ionode_id
   USE io_files,      ONLY : tmp_dir
   USE ener,          ONLY : Ef
-  USE klist,         ONLY : xk, lgauss, degauss, ngauss, nks, nelec, nkstot
-  USE ktetra,        ONLY : ltetra
+  USE klist,         ONLY : xk, lgauss, degauss, ngauss, nks, nelec, nkstot, ltetra
   USE lsda_mod,      ONLY : nspin, lsda, starting_magnetization
   USE scf,           ONLY : v, vrs, vltot, rho, rho_core, kedtau
   USE gvect,         ONLY : ngm
@@ -31,6 +30,7 @@
   USE uspp_param,    ONLY : upf
   USE spin_orb,      ONLY : domag
   USE constants,     ONLY : degspin, pi
+  USE constants_epw, ONLY : zero
   USE noncollin_module,     ONLY : noncolin, m_loc, angle1, angle2, ux
   USE wvfct,         ONLY : nbnd, et
   USE output,        ONLY : fildrho
@@ -38,13 +38,11 @@
   USE nlcc_ph,       ONLY : drc
   USE uspp,          ONLY : nlcc_any
   USE control_ph,    ONLY : lgamma_gamma, search_sym, start_irr, &
-                            last_irr, niter_ph, alpha_mix, all_done,  &
+                            last_irr, niter_ph, alpha_mix,  &
                             flmixdpot, reduce_io, u_from_file
-  USE control_lr,    ONLY : lgamma, alpha_pv, nbnd_occ
+  USE control_lr,    ONLY : alpha_pv, nbnd_occ
   USE gamma_gamma,   ONLY : has_equivalent, asr, nasr, n_diff_sites, &
                             equiv_atoms, n_equiv_atoms, with_symmetry
-  USE partial,       ONLY : comp_irr, atomo, nat_todo, all_comp, &
-                            done_irr
   USE modes,         ONLY : u, npertx, npert, nirr, nmodes, num_rap_mode
   USE lr_symm_base,  ONLY : gi, gimq, irotmq, minus_q, nsymq, invsymq, rtau
   USE qpoint,        ONLY : xq
@@ -54,10 +52,12 @@
   USE mp,            ONLY : mp_bcast
   USE mp,            ONLY : mp_max, mp_min
   USE mp_pools,      ONLY : inter_pool_comm
-  USE epwcom,        ONLY : xk_cryst
+  USE epwcom,        ONLY : xk_cryst,scattering, nstemp, tempsmin, tempsmax, &
+                            temps
   USE fft_base,      ONLY : dfftp
   USE gvecs,         ONLY : doublegrid
   USE start_k,       ONLY : nk1, nk2, nk3
+  USE transportcom,  ONLY : transp_temp
   !
   implicit none
   ! 
@@ -77,14 +77,8 @@
   !! counter on k points
   INTEGER :: ipol
   !! counter on bands
-  INTEGER :: mu
-  !! counter on polarizations
-  INTEGER :: imode0
-  !! counter on modes
   INTEGER :: irr
   !! the starting mode
-  INTEGER :: ipert
-  !! counter on representation and perturbat
   INTEGER :: na
   !! counter on atoms
   INTEGER :: it
@@ -95,7 +89,7 @@
   !! counter on atomic type
   INTEGER :: last_irr_eff
   !! Last effective irr
-  INTEGER, ALLOCATABLE :: ifat(:)
+  INTEGER :: itemp
   !!  
   REAL(kind=DP) :: rhotot
   !! total charge
@@ -309,15 +303,6 @@
 !     xk_col(:,1:nks) = xk(:,1:nks)
 !  ENDIF
   !
-  !   The small group of q may be known. At a given q it is calculated
-  !   by set_nscf, at gamma it coincides with the point group and we
-  !   take nsymq=nsym
-  !
-  IF (lgamma.AND.modenum==0) THEN
-     nsymq=nsym
-     minus_q=.TRUE.
-  ENDIF
-  !
   !   If the code arrives here and nsymq is still 0 the small group of q has 
   !   not been calculated by set_nscf because this is a recover run. 
   !   We recalculate here the small group of q.
@@ -327,8 +312,8 @@
   !
   !
   IF (modenum > 0) THEN
-     search_sym=.FALSE.
-     minus_q = .FALSE.
+    search_sym=.FALSE.
+    minus_q = .FALSE.
   ENDIF
   !
   ! allocate and calculate rtau, the bravais lattice vector associated
@@ -399,79 +384,34 @@
      flmixdpot = 'mixd'
   endif
   !
-  !  8) set the variables needed for the partial computation: nat_todo, 
-  !     atomo, comp_irr
+  !  8) set max perturbation
+  !     
   !
-  if (lgamma_gamma) then
-     with_symmetry=1
-     comp_irr = .FALSE.
-     comp_irr(0)=.TRUE.
-     do na=1,nat
-        if (has_equivalent(na)==0) then
-            do ipol=1,3
-               comp_irr(3*(na-1)+ipol)=.TRUE.
-               with_symmetry(3*(na-1)+ipol)=0
-            enddo
-        endif
-     enddo
-     if (nasr>0) then
-        do ipol=1,3
-           comp_irr(3*(nasr-1)+ipol)=.FALSE.
-           with_symmetry(3*(nasr-1)+ipol)=0
-        enddo
-     endif
-     IF (start_irr <= last_irr_eff) THEN
-        DO irr=1,start_irr-1
-           comp_irr(irr) = .FALSE.
-        ENDDO
-        DO irr=last_irr_eff+1,3*nat
-           comp_irr(irr) = .FALSE.
-        ENDDO
-     ENDIF
-  endif
-  !
-  !  Compute how many atoms moves and set the list atomo
-  !
-  ALLOCATE(ifat(nat))
-  ifat = 0
-  imode0 = 0
-  DO irr = 1, nirr
-     if (comp_irr (irr)) then
-        do ipert = 1, npert (irr)
-           do na = 1, nat
-              do ipol = 1, 3
-                 mu = 3 * (na - 1) + ipol
-                 if (abs (u (mu, imode0+ipert) ) > 1.d-12) ifat (na) = 1
-              enddo
-           enddo
-        enddo
-     endif
-     imode0 = imode0 + npert (irr)
-  ENDDO
-  nat_todo = 0
-  DO na = 1, nat
-     IF (ifat (na) == 1) THEN
-        nat_todo = nat_todo + 1
-        atomo (nat_todo) = na
-     ENDIF
-  ENDDO
-
-  DEALLOCATE(ifat)
-  !
-  !   Initialize done_irr, find max dimension of the irreps
-  !
-  all_comp=.true.
-  DO irr=1,nirr
-     IF (.NOT.comp_irr(irr)) all_comp=.false.
-  ENDDO
-  all_comp = all_comp.OR.lgamma_gamma
-  all_done = .FALSE.
   npertx = 0
-  done_irr = .FALSE.
   DO irr = 1, nirr
      npertx = max (npertx, npert (irr) )
   ENDDO
-
+  ! 
+  transp_temp(:) = zero
+  ! In case of scattering calculation
+  IF ( scattering ) THEN
+    ! 
+    IF ( maxval(temps(:)) > zero ) THEN
+      transp_temp(:) = temps(:)
+    ELSE
+      IF ( nstemp .eq. 1 ) THEN
+        transp_temp(1) = tempsmin
+      ELSE
+        DO itemp = 1, nstemp
+          transp_temp(itemp) = tempsmin + dble(itemp-1) * &
+                              ( tempsmax - tempsmin ) / dble(nstemp-1)
+        ENDDO
+      ENDIF
+    ENDIF
+  ENDIF
+  ! We have to bcast here because before it has not been allocated
+  CALL mp_bcast (transp_temp, ionode_id, world_comm)    !  
+  ! 
   CALL stop_clock ('epw_setup')
   RETURN
   !
@@ -484,7 +424,6 @@
   !! Setup in the case of a restart
   !! 
   ! ----------------------------------------------------------------------
-  USE kinds,         ONLY : DP
   USE constants_epw, ONLY : zero
   USE io_global,     ONLY : ionode_id
   USE mp_global,     ONLY : world_comm
@@ -527,6 +466,3 @@
   !-----------------------------------------------------------------------
   END SUBROUTINE epw_setup_restart
   !-----------------------------------------------------------------------
-
-
-

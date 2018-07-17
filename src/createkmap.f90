@@ -24,9 +24,9 @@
   USE kfold,         ONLY : g0vec_all, ng0vec, shift, g0vec_all_r
 ! SP: iverbosity cannot be tested here. Generates Tb of data ...  
 !  USE control_flags, ONLY : iverbosity 
-  USE mp_global,     ONLY : inter_pool_comm
+  USE io_global,     ONLY : meta_ionode
   USE mp,            ONLY : mp_barrier
-  USE mp_world,      ONLY : mpime
+  USE mp_world,      ONLY : world_comm
   USE elph2,         ONLY : xkq
   implicit none
   !
@@ -74,7 +74,7 @@
   !
   IF (.not. ALLOCATED(xkq) ) ALLOCATE(xkq (3, nkstot) )
   !
-  IF (mpime == 0) THEN
+  IF (meta_ionode) THEN
     !
     !  the first proc keeps a copy of all kpoints !
     !
@@ -261,7 +261,7 @@
     CLOSE ( unit = iukmap )
     !
   ENDIF
-  CALL mp_barrier(inter_pool_comm)
+  CALL mp_barrier(world_comm)
   !
   END SUBROUTINE createkmap
 
@@ -416,14 +416,13 @@
   !!
   !-------------------------------------------------------------------------
   USE kinds,         ONLY : DP
-  USE pwcom,         ONLY : at,bg
+  USE cell_base,     ONLY : at,bg
   USE start_k,       ONLY : nk1, nk2, nk3
   USE epwcom,        ONLY : xk_cryst
-  USE io_global,     ONLY : stdout
+  USE io_global,     ONLY : stdout, meta_ionode
   USE io_files,      ONLY : prefix
   USE gvecs,         ONLY : ngms, gcutms, ngms_g
-  USE gvect,         ONLY : gg, ngm, ngm_g, gcutm,&
-                            ig_l2g ,nl
+  USE gvect,         ONLY : gg, ngm, ngm_g, gcutm,ig_l2g
   USE control_flags, ONLY : gamma_only
   USE constants,     ONLY : eps8
   USE fft_base,      ONLY : dfftp
@@ -431,9 +430,8 @@
 #if defined(__NAG) 
   USE f90_unix_io,   ONLY : flush
 #endif
-  USE mp_global,     ONLY : inter_pool_comm
+  USE mp_global,     ONLY : inter_pool_comm, inter_image_comm
   USE mp,            ONLY : mp_barrier
-  USE mp_world,      ONLY : mpime
   !
   IMPLICIT NONE
   !
@@ -465,7 +463,7 @@
   INTEGER :: nl_2(ngm)
   INTEGER :: m1,m2,mc
   ! 
-  IF (mpime==0) THEN
+  IF (meta_ionode) THEN
     eps = 1.d-5
     !
     iukmap=97   ! unit for the file prefix.kmap
@@ -599,13 +597,14 @@
     
 END IF  
 CALL mp_barrier(inter_pool_comm)
+CALL mp_barrier(inter_image_comm)
 
 ! below are the routines previously found in the modified ggen.f90 code 
 
 
 
 !gg(:) =gcutm +1.d0
-nl_2(:)=nl(:)
+nl_2(:)=dfftp%nl(:)
 gg_2(:)=gg(:)
 gg_2(:) = gcutm + 1.d0
 
@@ -709,14 +708,14 @@ ngms = 0
     j = mill_g(2, ng)
     k = mill_g(3, ng)
 
-#if defined(__MPI)
+IF (dfftp%lpara) THEN
     m1 = MOD (i, dfftp%nr1) + 1
     IF (m1.LT.1) m1 = m1 + dfftp%nr1
     m2 = MOD (j, dfftp%nr2) + 1
     IF (m2.LT.1) m2 = m2 + dfftp%nr2
     mc = m1 + (m2 - 1) * dfftp%nr1x
     IF ( dfftp%isind ( mc ) .EQ.0) GOTO 1
-#endif
+ENDIF
 
     tt = 0.d0
     DO ipol = 1, 3
@@ -805,6 +804,7 @@ ngms = 0
      CALL refold( ngm_g, mill_g, itoj, jtoi )
      !
   CALL mp_barrier(inter_pool_comm)
+  CALL mp_barrier(inter_image_comm)
   !
   DEALLOCATE(ig_l2g,mill_g,igsrt,g2sort_g,jtoi,itoj)
   !

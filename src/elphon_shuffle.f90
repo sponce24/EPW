@@ -25,12 +25,15 @@
   USE mp_global, ONLY : my_pool_id, nproc_pool,npool,kunit,&
                           inter_pool_comm
   USE mp_images, ONLY : nproc_image
-  USE pwcom,     ONLY : nbnd, ngm, doublegrid, nks, nkstot
+  USE pwcom,     ONLY : nbnd, nks, nkstot
+  USE gvect,     ONLY : ngm
+  USE gvecs,     ONLY : doublegrid
   USE kinds,     ONLY : DP
   USE modes,     ONLY : nmodes, nirr, npert, u
   USE elph2,     ONLY : epmatq, el_ph_mat
   USE constants_epw, ONLY : czero, cone
   USE fft_base,  ONLY : dfftp, dffts
+  USE fft_interfaces, ONLY : fft_interpolate
   USE noncollin_module,     ONLY : nspin_mag
 !  USE noncollin_module,     ONLY : noncolin
   !
@@ -108,7 +111,7 @@
         ALLOCATE (dvscfins ( dffts%nnr , nspin_mag , npert(irr)) )
         DO is = 1, nspin_mag
            DO ipert = 1, npert(irr)
-              CALL cinterpolate (dvscfin(1,is,ipert),dvscfins(1,is,ipert),-1)
+              CALL fft_interpolate (dfftp, dvscfin(:,is,ipert), dffts, dvscfins(:,is,ipert))
            ENDDO 
         ENDDO
      ELSE
@@ -141,8 +144,8 @@
           CALL zgemv ('n', nmodes, nmodes, cone, u , nmodes, &
             el_ph_mat (ibnd,jbnd,ik,:), 1, czero, epmatq (ibnd,jbnd,ik,:,iq), 1)
         ELSE
-        CALL zgemv ('n', nmodes, nmodes, cone, CONJG ( u ), nmodes, &
-          el_ph_mat (ibnd,jbnd,ik,:), 1, czero, epmatq (ibnd,jbnd,ik,:,iq), 1 )
+          CALL zgemv ('n', nmodes, nmodes, cone, CONJG( u ), nmodes, &
+            el_ph_mat (ibnd,jbnd,ik,:), 1, czero, epmatq (ibnd,jbnd,ik,:,iq), 1 )
         ENDIF 
         !
       ENDDO

@@ -54,6 +54,14 @@
   !! parameter used in writing prefix.win file. 
   INTEGER :: ntempxx = 25
   !! Maximum number of wannier functions
+  INTEGER :: etf_mem
+  !! If 0, all in memory. If 1, less is stored in memory (read files). 
+  INTEGER :: scr_typ
+  !! If 0 calculates the Lindhard screening, if 1 the Thomas-Fermi screening
+  INTEGER :: bnd_cum
+  !! band index for which the cumulant calculation is done
+  INTEGER :: mob_maxiter
+  !! Maximum number of iteration for the IBTE
   !
   ! Superconductivity
   INTEGER :: nswfc
@@ -70,6 +78,8 @@
   !! nr. of iterations used in broyden mixing scheme
   INTEGER :: nw_specfun
   !! nr. of bins for frequency in electron spectral function due to e-p interaction 
+  INTEGER :: restart_freq
+  !! Create a restart point during the interpolation part every restart_freq q/k-points. 
   !
   REAL (KIND=DP) :: degaussw
   !! smearing width for Fermi surface average in e-ph coupling after wann interp
@@ -138,6 +148,28 @@
   !! Value of the scissor shift in eV.
   REAL (KIND=DP) :: ncarrier
   !! Amount of carrier concentration in cm^-3 when doping a semiconductors
+  ! 
+  ! Plasmon
+  REAL (KIND=DP) :: nel
+  !! fractional number of electrons in the unit cell
+  REAL (KIND=DP) :: meff
+  !! Density-of-state effective mass (in unit of the electron mass)
+  REAL (KIND=DP) :: epsiHEG
+  !! Dielectric constant at zero doping. 
+  REAL (KIND=DP) :: fermi_diff
+  !! difference between Fermi energy and band edge (in eV)
+  REAL (KIND=DP) :: smear_rpa
+  !! smearing for the calculation of the Lindhard function (in eV)
+  ! 
+  ! Phonon-assisted absorption
+  REAL (KIND=DP) :: omegamin
+  !! Photon energy minimum (in eV)
+  REAL (KIND=DP) :: omegamax
+  !! Photon energy maximum (in eV)
+  REAL (KIND=DP) :: omegastep
+  !! Photon energy step (in eV)
+  REAL (KIND=DP) :: n_r
+  !! Refractive index
   !
   !LOGICAL :: tphases
   !! tphases:  if .TRUE. set absolute reference for unitary gauge of the eigenvectors
@@ -145,6 +177,8 @@
   !! if .TRUE. calculate electron selfenergy due to e-p interaction
   LOGICAL :: phonselfen
   !! if .TRUE. calculate phonon selfenergy due to e-p interaction
+  LOGICAL :: plselfen
+  !! if .TRUE. calculate the electron-plason self-energy 
   LOGICAL :: epbread
   !! if .TRUE. read epmatq from files .epb
   LOGICAL :: epbwrite
@@ -153,20 +187,19 @@
   !! if .TRUE. read all quantities in Wannier representation from file epwdata.fmt
   LOGICAL :: epwwrite
   !! if .TRUE. write all quantities in Wannier representation to file epwdata.fmt
-  LOGICAL :: specfun
+  LOGICAL :: restart
+  !! if .TRUE. restart a calculation stopped during the interpolation phase from reading 
+  !! the XXX.restart file. 
+  LOGICAL :: specfun_el
   !! if .TRUE. calculate spectral electron function due to e-p interaction
+  LOGICAL :: specfun_ph
+  !! if .TRUE. calculate spectral phonon function due to e-p interaction
+  LOGICAL :: specfun_pl
+  !! if .TRUE. calculate plasmon spectral function
   LOGICAL :: wannierize
   !! if .TRUE. run the wannier90 code
-  LOGICAL :: spinors
-  !! if .TRUE. run the wannier90 with spinors
-  LOGICAL :: parallel_k
-  !! if .TRUE. scatter the electron k-points on the fine mesh among pools (not q)
-  LOGICAL :: parallel_q
-  !! if .TRUE. scatter the phonon q-points on the fine mesh among pools (not k)
   LOGICAL :: a2f
   !! if .TRUE. calculate Eliashberg spectral electron function from selfen_phon
-  LOGICAL :: etf_mem
-  !! If .true., the fine Bloch-space e-ph matrix elements are stored in memory
   LOGICAL :: write_wfn
   !! if .TRUE. write out UNK files in wannier90
   LOGICAL :: kmaps
@@ -193,6 +226,12 @@
   ! band_plot : if .true. write filrs to plot band structure and phonon dispersion
   LOGICAL :: lpolar 
   !! if .true. enable the correct Wannier interpolation in the case of polar material.  
+  LOGICAL :: lscreen
+  !! if .true. the e-ph matrix elements are screened by the RPA or TF dielectric function
+  LOGICAL :: lifc
+  !! if .true. reads interatomic force constants produced by q2r.x for phonon interpolation
+  LOGICAL :: cumulant
+  !! if .true. calculates the electron spectral function using the cumulant expansion method
   LOGICAL :: delta_approx
   !! if .true. the double delta approximation is used for the phonon self energy
   LOGICAL :: ep_coupling
@@ -201,6 +240,12 @@
   !! if .true. fermi energy is read from the input file
   LOGICAL :: system_2d
   !! if .true. the system is 2 dimensional (vaccum is in z-direction)
+  LOGICAL :: prtgkk
+  !! if .true. print the |g| vertex in [meV].
+  LOGICAL :: lphase
+  !! if .true. then fix the gauge when diagonalizing the interpolated dynamical matrix and electronic Hamiltonian. 
+  LOGICAL :: lindabs
+  !! if .true., perform phonon-assisted absorption calculations
   !
   ! Superconductivity
   LOGICAL :: ephwrite
@@ -233,6 +278,8 @@
   !! if .true. scattering rates are calculated
   LOGICAL :: scattering_serta
   !! if .true. scattering rates are calculated using self-energy relaxation-time-approx
+  LOGICAL :: scatread
+  !! if .true. the scattering rates are read from file.
   LOGICAL :: scattering_0rta
   !! if .true. scattering rates are calculated using 0th order relaxation-time-approx
   LOGICAL :: int_mob
@@ -250,10 +297,17 @@
   !! directory for .dvscf and .dyn files (wannier interpolation)
   CHARACTER(len=80) :: fileig 
   !! output file for the electron-phonon coefficients
-  CHARACTER(len=256), dimension(200) :: proj, wdata 
-  !! projections and any extra info for W90 
+  CHARACTER(len=256), dimension(200) :: proj 
+  !! projections for W90 
+  CHARACTER(len=256) :: bands_skipped
+  !! k-point independent list of bands excluded from the calculation 
+  !! of overlap and projection matrices in W90
+  CHARACTER(len=256), dimension(200) :: wdata
+  !! any extra info for W90
   CHARACTER(LEN=75) :: title 
   !! ...  title of the simulation  
+  CHARACTER(LEN=10)  :: asr_typ
+  !! type of ASR if lifc=.true.
   !
 END MODULE control_epw
 !
@@ -308,6 +362,8 @@ MODULE output_epw
   !! output file for the deltavscf used as a fake perturbation to set phases
   CHARACTER (LEN=80) :: fila2f
   !! input file containing eliashberg spectral function
+  CHARACTER (LEN=80) :: restart_filq
+  !! input  file to restart from an exisiting q-file
   !
 END MODULE output_epw
 !

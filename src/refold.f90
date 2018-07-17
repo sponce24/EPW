@@ -28,17 +28,16 @@
   !   the large sphere (density set).
   !
   !-----------------------------------------------------------------
-  USE io_global,     ONLY : stdout
+  USE io_global,     ONLY : stdout, meta_ionode
   USE io_epw,        ONLY : iukgmap
 ! SP: Sucidal. Produce too much data. Only use for debugging. 
 !  USE control_flags, ONLY : iverbosity
   USE kfold
-  USE mp_global,     ONLY : my_pool_id,me_pool 
   !
   implicit none
-  integer :: ngm_g, mill_g( 3, ngm_g ), ig0, ig1, ig2, ig2_guess, i, j, k, &
+  INTEGER :: ngm_g, mill_g( 3, ngm_g ), ig0, ig1, ig2, ig2_guess, i, j, k, &
              notfound, indold, indnew, guess_skip,itoj(ngm_g),jtoi(ngm_g),ig1_use,ig2_use
-  logical :: tfound
+  LOGICAL :: tfound
   !
 !  IF (iverbosity.eq.1) then 
 !    WRITE(stdout,*) '  There are ',ng0vec,'inequivalent folding G_0 vectors'
@@ -127,7 +126,7 @@
   ! 
   !  output on file for electron-phonon matrix elements
   !
-  IF (me_pool.ne.0.or.my_pool_id.ne.0) iukgmap = stdout
+  IF (.NOT. meta_ionode) iukgmap = stdout
   !
   DO ig1 = 1, ngm_g
     WRITE (iukgmap, '(9i10)') (gmap ( ig1, ig0), ig0 = 1, ng0vec)

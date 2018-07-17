@@ -10,7 +10,7 @@
   !-----------------------------------------------------------------------
   PROGRAM epw
   !! author: Samuel Ponce', Roxana Margine, Carla Verdi, Feliciano Giustino
-  !! version: v4.1
+  !! version: v5.0
   !! license: GNU
   !! summary: EPW main driver 
   !!  
@@ -20,14 +20,14 @@
   !! @Note
   !! 8/14/08 lnscf is unnecessary, as is nqs,iq_start
   !!
-  USE io_global,       ONLY : stdout
+  USE io_global,       ONLY : stdout, ionode
   USE mp,              ONLY : mp_bcast, mp_barrier
   USE mp_world,        ONLY : mpime  
   USE mp_global,       ONLY : mp_startup, ionode_id, mp_global_end
   USE control_flags,   ONLY : gamma_only
   USE control_epw,     ONLY : wannierize
   USE global_version,  ONLY : version_number
-  USE epwcom,          ONLY : filukk, eliashberg, ep_coupling, epwread, epbread
+  USE epwcom,          ONLY : filukk, eliashberg, ep_coupling, epwread, epbread, cumulant
   USE environment,     ONLY : environment_start
   USE elph2,           ONLY : elph 
   ! Flag to perform an electron-phonon calculation. If .true. 
@@ -39,7 +39,7 @@
   CHARACTER (LEN=12)   :: code = 'EPW'
   !! Name of the program
   !
-  version_number = '4.1.0'
+  version_number = '5.0.0'
   !
   CALL init_clocks( .TRUE. )
   !
@@ -47,7 +47,7 @@
   !
   gamma_only = .FALSE.
   !
-  CALL mp_startup()
+  CALL mp_startup(start_images=.true.)
   !
   ! Display the logo
   IF (mpime.eq.ionode_id) then
@@ -77,14 +77,11 @@ write(stdout,'(a)') "   -+h/------------------------::::::::://////+++++++++++++
 write(stdout,'(a)') "   shdddddddddddddddddddddddddddddhhhhhhhhyyyyyssssssssssssssssyyyyyyyhhhhhhhddddh`   "
 write(stdout,'(a)') "                                                                                      "
 write(stdout,'(a)') "  S. Ponce, E. R. Margine, C. Verdi, and F. Giustino,                                 "
-write(stdout,'(a)') "                                          http://dx.doi.org/10.1016/j.cpc.2016.07.028 "
+write(stdout,'(a)') "                                                Comput. Phys. Commun. 209, 116 (2016) "
 write(stdout,'(a)') "                                                                                      "
   ENDIF
   !
   CALL environment_start ( code )
-  !
-  IF ( ep_coupling ) & 
-  WRITE( stdout, '(/5x,"Ultrasoft (Vanderbilt) Pseudopotentials")' )
   !
   ! Read in the input file
   !
@@ -163,6 +160,10 @@ write(stdout,'(a)') "                                                           
     !
     CALL close_epw()
     !
+  ENDIF
+  ! 
+  IF ( cumulant .and. ionode ) THEN
+     CALL spectral_cumulant()
   ENDIF
   !
   IF ( eliashberg ) THEN

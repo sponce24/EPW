@@ -25,20 +25,17 @@
   !!
   !
   USE ions_base,        ONLY : nat, ityp, ntyp => nsp
-  USE io_files,         ONLY : prefix, tmp_dir
-  USE io_global,        ONLY : stdout
-  USE io_epw,           ONLY : iurecover
-  USE pwcom,            ONLY : lspinorb, gg, ngm, tpiba2, nl, eigts3, &
-                               eigts2, eigts1, omega, tpiba, g, nspin, mill, & 
-                               domag
+  USE pwcom,            ONLY : lspinorb, nspin, domag
+  USE cell_base,        ONLY : tpiba2, omega, tpiba
+  USE gvect,            ONLY : ngm, gg, g, eigts1, eigts2, eigts3, mill
   USE scf,              ONLY : v, vltot
   USE noncollin_module, ONLY : noncolin
   USE kinds,            ONLY : DP
-  USE phcom,            ONLY : int1, int2, int4, int5, recover,  &
+  USE phcom,            ONLY : int1, int2, int4, int5, &
                                int5_so, vlocq, int4_nc
   USE qpoint,           ONLY : xq, eigqts
   USE uspp_param,       ONLY : upf, lmaxq, nh
-  USE mp_global,        ONLY : my_pool_id, npool, intra_pool_comm
+  USE mp_global,        ONLY : intra_pool_comm
   USE mp,               ONLY : mp_sum
   USE uspp,             ONLY : okvan
   USE fft_base,         ONLY : dfftp
@@ -65,17 +62,12 @@
   ! the augmentation function at G
   complex(kind=DP), POINTER :: qgmq (:)
   ! the augmentation function at q+G
-  character (len=256) :: tempfile
-  character (len=3) :: filelab
-  logical :: exst
-
+  ! 
   IF (.not.okvan) RETURN
-
-!  if (recover.and..not.ldisp) return
-
+  ! 
   nspin0=nspin
   IF (nspin==4.and..not.domag) nspin0=1
-
+  ! 
   CALL start_clock ('dvanqq2')
   int1(:,:,:,:,:) = (0.d0, 0.d0)
   int2(:,:,:,:,:) = (0.d0, 0.d0)
@@ -119,31 +111,13 @@
            veff (ir, is) = CMPLX (v%of_r (ir, is), 0.d0, kind=DP)
         ENDDO
      ENDIF
-     CALL fwfft ('Dense', veff(:,is), dfftp)
+     CALL fwfft ('Rho', veff(:,is), dfftp)
   ENDDO
   !
   !     We compute here two of the three integrals needed in the phonon
   !
   fact1 = CMPLX (0.d0, - tpiba * omega, kind=DP)
   !
-  tempfile = trim(tmp_dir) // trim(prefix) // '.recover' 
-#if defined(__MPI)
-  CALL set_ndnmbr (0,my_pool_id+1,1,npool,filelab)
-  tempfile = trim(tmp_dir) // trim(prefix) // '.recover' // filelab
-#endif
-  !
-  IF (recover) THEN
-     WRITE (stdout,*) "    Using recover mode for USPP"
-     inquire(file = tempfile, exist=exst)
-     IF (.not. exst ) CALL errore( 'dvanqq2', 'recover files not found ', 1)
-     OPEN (iurecover, file = tempfile, form = 'unformatted')
-     IF (noncolin) THEN
-        READ (iurecover) int1, int2, int4, int5
-     ELSE
-        READ (iurecover) int1, int2
-     ENDIF
-     CLOSE(iurecover)
-  ELSE
   DO ntb = 1, ntyp
      IF (upf(ntb)%tvanp ) THEN
         ijh = 0
@@ -207,7 +181,7 @@
                     DO is = 1, nspin0
                        DO ipol = 1, 3
                           DO ig = 1, ngm
-                             aux2 (ig) = veff (nl (ig), is) * g (ipol, ig)
+                             aux2 (ig) = veff (dfftp%nl(ig),is) * g (ipol, ig)
                           ENDDO
                           int1 (ih, jh, ipol, nb, is) = - fact1 * &
                                ZDOTC (ngm, aux1, 1, aux2, 1)
@@ -254,14 +228,6 @@
   CALL mp_sum(  int2, intra_pool_comm )
   call mp_sum(  int4, intra_pool_comm )
   call mp_sum(  int5, intra_pool_comm )
-  OPEN (iurecover, file = tempfile, form = 'unformatted')
-  IF (noncolin) THEN 
-     WRITE (iurecover) int1, int2, int4, int5
-  ELSE
-     WRITE (iurecover) int1, int2
-  ENDIF
-  CLOSE(iurecover)
-  ENDIF
   IF (noncolin) THEN
      CALL set_int12_nc(0)
      int4_nc = (0.d0, 0.d0)
@@ -297,6 +263,5 @@
   DEALLOCATE (sk)
 
   CALL stop_clock ('dvanqq2')
-  CALL print_clock('dvanqq2')
   RETURN
 END SUBROUTINE dvanqq2
