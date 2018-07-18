@@ -5,6 +5,294 @@
   ! License. See the file `LICENSE' in the root directory of the               
   ! present distribution, or http://www.gnu.org/copyleft.gpl.txt .             
   !                                                                            
+!  !----------------------------------------------------------------------------
+!  SUBROUTINE ibtesup_write ( trans_prob )
+!  !----------------------------------------------------------------------------
+!  !
+!  USE kinds,     ONLY : DP
+!  USE io_global, ONLY : stdout
+!  USE io_epw,    ONLY : iufilscatt_rate
+!  USE elph2,     ONLY : ibndmax, ibndmin, nkqtotf, inv_tau_all
+!  USE epwcom,    ONLY : nbndsub, nstemp
+!  USE constants_epw, ONLY : ryd2mev, kelvin2eV, ryd2ev, &
+!                            meV2invps, eps4
+!  USE mp,        ONLY : mp_barrier
+!  USE mp_global, ONLY : inter_pool_comm
+!  USE mp_world,  ONLY : mpime
+!  USE io_global, ONLY : ionode_id
+!  !
+!  IMPLICIT NONE
+!  !
+!  INTEGER, INTENT(IN) :: itemp
+!  !! Temperature index
+!  REAL(KIND=DP), INTENT(IN) :: etemp
+!  !! Temperature in Ry (this includes division by kb)
+!  REAL(KIND=DP), INTENT(IN) :: ef0(nstemp)
+!  !! Fermi level for the temperature itemp
+!  REAL(KIND=DP), INTENT(IN) :: etf_all(nbndsub, nkqtotf)
+!  !! Eigen-energies on the fine grid collected from all pools in parallel case
+!  ! 
+!  ! Local variables
+!  INTEGER :: ik
+!  !! K-point index
+!  INTEGER :: ikk
+!  !! Odd index to read etf
+!  INTEGER :: ikq
+!  !! Even k+q index to read etf
+!  INTEGER :: ibnd
+!  !! Local band index
+!  REAL(KIND=DP) :: ekk
+!  !! Energy relative to Fermi level: $$\varepsilon_{n\mathbf{k}}-\varepsilon_F$$
+!  REAL(KIND=DP) :: temp
+!  !! Temporary file name used to write scattering rate to file. 
+!  !
+!  CHARACTER (len=256) :: name1
+!  !! Name used to write scattering rates to file. 
+!  !
+!  WRITE(stdout,'(/5x,"Writing IBTE support data to file"/)')
+!  ! 
+!  IF (mpime.eq.ionode_id) THEN
+!    !
+!    ! Write to file
+!    OPEN(iufilibte_sup,file='IBTE_sup', form='formatted')
+!    WRITE(iufilibte_sup,'(a)') '# Inverse scattering time (ps)'
+!    WRITE(iufilibte_sup,'(a)') '#      ik       ibnd                 E(ibnd) scattering rate(1/ps)'
+!    !
+!    !  nq = total number of q-points included
+!    !  nk = number of k-points in the fshick for that q-points
+!    
+!
+!    DO ik = 1, nkqtotf/2
+!      !
+!      ikk = 2 * ik - 1
+!      ikq = ikk + 1
+!      !
+!      DO ibnd = 1, ibndmax-ibndmin+1
+!        !
+!        ! note that ekk does not depend on q
+!        ekk = etf_all (ibndmin-1+ibnd, ikk) - ef0(itemp)
+!        !
+!        WRITE(iufilscatt_rate,'(i9,2x)',advance='no') ik
+!        WRITE(iufilscatt_rate,'(i9,2x)',advance='no') ibndmin-1+ibnd
+!        WRITE(iufilscatt_rate,'(E22.14)',advance='no') ryd2ev * ekk
+!        WRITE(iufilscatt_rate,'(E26.16E3)') ryd2mev * meV2invps * inv_tau_all(itemp,ibnd,ik)
+!        !
+!      ENDDO
+!      !
+!    ENDDO
+!    !
+!    CLOSE(iufilscatt_rate)
+!  ENDIF
+!  CALL mp_barrier(inter_pool_comm)
+!
+!
+!
+!  !----------------------------------------------------------------------------
+!  END SUBROUTINE ibtesup_write
+!  !----------------------------------------------------------------------------
+!
+!  !----------------------------------------------------------------------------
+!  SUBROUTINE ibte_read ( trans_prob )
+!  !----------------------------------------------------------------------------
+!  USE kinds,     ONLY : DP
+!  USE io_global, ONLY : stdout
+!  USE io_epw,    ONLY : iufilFi_all
+!  USE epwcom,    ONLY : nstemp
+!  USE constants_epw, ONLY : zero
+!  USE io_files,  ONLY : prefix, tmp_dir, diropn
+!  USE mp,        ONLY : mp_barrier, mp_bcast
+!  USE mp_global, ONLY : inter_pool_comm, intra_pool_comm, root_pool
+!  USE mp_world,  ONLY : mpime
+!  USE io_global, ONLY : ionode_id
+!  USE elph2,        ONLY : F_current, ibndmax, ibndmin, Fi_all, F_currentcb, &
+!                           Fi_allcb
+!  USE transportcom, ONLY : lower_bnd, upper_bnd, mobilityh_save, mobilityel_save
+!  !
+!  IMPLICIT NONE
+!  !
+!  INTEGER, INTENT(OUT) :: iter
+!  !! Iteration number
+!  INTEGER, INTENT(INOUT) :: iq
+!  !! Current q-point
+!  INTEGER, INTENT(IN) :: nqtotf
+!  !! Total number of q-points
+!  INTEGER, INTENT(IN) :: nktotf
+!  !! Total number of k-points
+!  REAL(kind=DP), INTENT(INOUT) :: trans_prob
+!  !! Transition probability
+!  REAL(kind=DP), INTENT(INOUT) :: error_el
+!  !! Error in the electron mobility
+!  LOGICAL, INTENT(IN) :: second
+!  !! IF we have two Fermi level
+!  !
+!  ! Local variable
+!  LOGICAL :: exst
+!  !! 
+!  INTEGER :: i
+!  !! Running index for the vector
+!  INTEGER :: lfi_all
+!  !! Length of the vector
+!  INTEGER :: ik
+!  !! k-point index
+!  INTEGER :: ibnd
+!  !! band index
+!  INTEGER :: idir
+!  !! Direction index
+!  INTEGER :: nqtotf_read
+!  !! Total number of q-point read
+!  INTEGER :: itemp
+!  !! Temperature index
+!  ! 
+!  CHARACTER (len=256) :: name1
+!
+!  REAL(KIND=DP) :: aux ( 3 * nstemp * (ibndmax-ibndmin+1) * nktotf + 7 + 2 * nstemp )
+!  !! Vector to store the array
+!  !
+!  IF (mpime.eq.ionode_id) THEN
+!    ! 
+!    ! First inquire if the file exists
+!#if defined(__MPI)
+!    name1 = trim(tmp_dir) // trim(prefix) // '.epmatkq1'
+!#else
+!    name1 = trim(tmp_dir) // trim(prefix) // '.epmatkq'
+!#endif
+!    INQUIRE(file = name1, exist=exst)
+!    ! 
+!    IF (exst) THEN ! read the file
+!      !
+!      lfi_all = 3 * nstemp * (ibndmax-ibndmin+1) * nktotf + 7 + 2 * nstemp
+!      CALL diropn (iufilFi_all, 'F_restart', lfi_all, exst)
+!      CALL davcio ( aux, lfi_all, iufilFi_all, 1, -1 )
+!      !
+!      ! First element is the iteration number
+!      iter = INT( aux(1) )
+!      ! Current iteration number
+!      iq = INT( aux(2) )
+!      iq = iq + 1 ! we need to start at the next q
+!      ! Total number of q-points
+!      nqtotf_read = INT( aux(3) )
+!      ! Error in hole mobility
+!      error_h = aux(4)
+!      ! Error in electron mobility
+!      error_el = aux(5)
+!      ! This is the error of the previous iteration. Therefore when you restart
+!      ! from a converged one, you want to be finished. 
+!      ! This small substraction wont affect anything. 
+!      error_h = error_h -0.5E-2
+!      error_el = error_el -0.5E-2
+!      !
+!      IF ( nqtotf_read /= nqtotf) CALL errore('io_scattering',&
+!        &'Error: The current total number of q-point is not the same as the read one. ',1)
+!      !
+!      i = 5
+!      DO itemp=1, nstemp
+!        i = i + 1
+!        ! Last value of hole mobility 
+!        mobilityh_save(itemp) = aux(i)
+!      ENDDO
+!      ! 
+!      i = 5 + nstemp
+!      DO itemp=1, nstemp
+!        i = i + 1
+!        ! Last value of electron mobility
+!        mobilityel_save(itemp) = aux(i)
+!      ENDDO
+!      ! 
+!      i = 5 + nstemp + nstemp
+!      DO itemp=1, nstemp
+!        DO ik=1, nktotf
+!          DO ibnd=1, (ibndmax-ibndmin+1)
+!            DO idir=1,3
+!              i = i +1
+!              F_current(idir, ibnd, ik, itemp) = aux(i)
+!            ENDDO
+!          ENDDO
+!        ENDDO
+!      ENDDO
+!      CLOSE(iufilFi_all)
+!    ENDIF
+!    ! 
+!    IF (second) THEN
+!      ! 
+!      ! First inquire if the file exists
+!#if defined(__MPI)
+!      name1 = trim(tmp_dir) // trim(prefix) // '.F_restart_CB1'
+!#else
+!      name1 = trim(tmp_dir) // trim(prefix) // '.F_restart_CB'
+!#endif
+!      INQUIRE(file = name1, exist=exst)
+!      ! 
+!      IF (exst) THEN ! read the file
+!        !
+!        CALL diropn (iufilFi_all, 'F_restart_CB', lfi_all, exst)
+!        CALL davcio ( aux, lfi_all, iufilFi_all, 1, -1 )
+!        !
+!        i = 5 + nstemp + nstemp
+!        DO itemp=1, nstemp
+!          DO ik=1, nktotf
+!            DO ibnd=1, (ibndmax-ibndmin+1)
+!              DO idir=1,3
+!                i = i +1
+!                F_currentcb(idir,ibnd, ik, itemp) = aux(i)
+!              ENDDO
+!            ENDDO
+!          ENDDO
+!        ENDDO
+!        CLOSE(iufilFi_all)
+!      ENDIF ! exist 
+!    ENDIF ! second
+!  ENDIF ! mpime
+!  ! 
+!  CALL mp_bcast (exst, ionode_id, inter_pool_comm)
+!  CALL mp_bcast (exst, root_pool, intra_pool_comm)
+!  !
+!  IF (exst) THEN
+!    CALL mp_bcast (iter, ionode_id, inter_pool_comm)
+!    CALL mp_bcast (iter, root_pool, intra_pool_comm)
+!    CALL mp_bcast (iq, ionode_id, inter_pool_comm)
+!    CALL mp_bcast (iq, root_pool, intra_pool_comm)
+!    CALL mp_bcast (F_current, ionode_id, inter_pool_comm)
+!    CALL mp_bcast (F_current, root_pool, intra_pool_comm)
+!    IF (second) THEN
+!      CALL mp_bcast (F_currentcb, ionode_id, inter_pool_comm)
+!      CALL mp_bcast (F_currentcb, root_pool, intra_pool_comm)
+!    ENDIF
+!    CALL mp_bcast (mobilityh_save, ionode_id, inter_pool_comm)
+!    CALL mp_bcast (mobilityh_save, root_pool, intra_pool_comm)
+!    CALL mp_bcast (mobilityel_save, ionode_id, inter_pool_comm)
+!    CALL mp_bcast (mobilityel_save, root_pool, intra_pool_comm)
+!    CALL mp_bcast (error_h, ionode_id, inter_pool_comm)
+!    CALL mp_bcast (error_h, root_pool, intra_pool_comm)
+!    CALL mp_bcast (error_el, ionode_id, inter_pool_comm)
+!    CALL mp_bcast (error_el, root_pool, intra_pool_comm)
+!    ! 
+!    ! The Fi on the commensurate full k-grid is equal to the full
+!    ! F_current from the previous read run.
+!    Fi_all = F_current
+!    CALL mp_bcast (Fi_all, ionode_id, inter_pool_comm)
+!    CALL mp_bcast (Fi_all, root_pool, intra_pool_comm)
+!    ! 
+!    ! Make everythin 0 except the range of k-points we are working on
+!    IF (lower_bnd > 1 ) F_current(:,:,1:lower_bnd-1,:) = zero
+!    IF (upper_bnd < nktotf ) F_current(:,:,upper_bnd+1:nktotf,:) = zero
+!    ! 
+!    IF (second) THEN
+!      Fi_allcb = F_currentcb
+!      CALL mp_bcast (Fi_allcb, ionode_id, inter_pool_comm)
+!      CALL mp_bcast (Fi_allcb, root_pool, intra_pool_comm)
+!      ! 
+!      ! Make everythin 0 except the range of k-points we are working on
+!      IF (lower_bnd > 1 ) F_currentcb(:,:,1:lower_bnd-1,:) = zero
+!      IF (upper_bnd < nktotf ) F_currentcb(:,:,upper_bnd+1:nktotf,:) = zero
+!    ENDIF
+!    ! 
+!    WRITE(stdout, '(a,i10,a,i10,a,i10)' ) '     Restart from iter: ',iter,' and iq: ',iq,'/',nqtotf
+!  ENDIF ! exists
+!  !
+!  !----------------------------------------------------------------------------
+!  END SUBROUTINE ibte_read
+!  !----------------------------------------------------------------------------
+
   !----------------------------------------------------------------------------
   SUBROUTINE F_write(iter, iq, nqtotf, nktotf, error_h, error_el, second)
   !----------------------------------------------------------------------------

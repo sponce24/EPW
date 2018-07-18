@@ -29,7 +29,7 @@
             iufilfreq, iufilegnv, iufileph, iufilkqmap, &
             iufilikmap, iueig, iunepmatwp, iunepmatwe, iunkf, iunqf, &
             iufileig, iukmap, crystal, iunifc, iunimem, iunepmatwp2, &
-            iunepmat, iunepmatcb
+            iunepmat, iunepmatcb, iufilibte_sup, iufilibtev_sup
   PUBLIC :: iuwinfil, iun_plot, iuukk, iuprojfil, iudecayH, iudecayP, &
             iudecaydyn, iudecayv, iummn, iubvec
   PUBLIC :: iufilsigma, iufilseebeck, iufilkappael, iufilkappa, iufilscatt_rate,&
@@ -104,6 +104,8 @@
   INTEGER :: iunepmatwp2     = 126  ! Opening the epmatwp file
   INTEGER :: iunepmat        = 127  ! Opening the epmatkq files
   INTEGER :: iunepmatcb      = 128  ! Opening the epmatkqcb file
+  INTEGER :: iufilibte_sup   = 129  ! Opening the IBTE_sup support file
+  INTEGER :: iufilibtev_sup  = 130  ! Opening the IBTE_sup support file
   !
   ! Output quantites related to Wannier (201-250)
   !  

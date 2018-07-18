@@ -48,7 +48,7 @@
   USE io_global,     ONLY : stdout, ionode
   USE io_epw,        ONLY : lambda_phself, linewidth_phself, iunepmatwe,        &
                             iunepmatwp, crystal, iunepmatwp2, iunepmat,         &
-                            iunepmatcb
+                            iunepmatcb, iufilibtev_sup, iufilibte_sup
   USE elph2,         ONLY : cu, cuq, lwin, lwinq, map_rebal, map_rebal_inv,     &
                             chw, chw_ks, cvmew, cdmew, rdw,                     &
                             epmatwp, epmatq, wf, etf, etf_k, etf_ks, xqf, xkf,  &
@@ -81,7 +81,8 @@
   USE mp_world,      ONLY : mpime, world_comm
 #if defined(__MPI)
   USE parallel_include, ONLY: MPI_MODE_RDONLY, MPI_INFO_NULL, MPI_MODE_WRONLY, &
-                              MPI_MODE_CREATE, MPI_MODE_RDWR, MPI_OFFSET_KIND
+                              MPI_MODE_CREATE, MPI_MODE_RDWR, MPI_OFFSET_KIND, &
+                              MPI_SEEK_SET, MPI_STATUS_IGNORE, MPI_DOUBLE_PRECISION
 #endif
   !
   implicit none
@@ -107,7 +108,7 @@
   CHARACTER (len=30)  :: myfmt
   !! Variable used for formatting output
   ! 
-  INTEGER :: ios
+  INTEGER :: ios, itmp,ktmp, ikgl, nbk
   !! integer variable for I/O control
   INTEGER :: iq 
   !! Counter on coarse q-point grid
@@ -180,9 +181,13 @@
 #if defined(__MPI)
   INTEGER (kind=MPI_OFFSET_KIND) :: lrepmatw2
   !! Offset to tell where to start reading the file
+  !! 
+  INTEGER (kind=MPI_OFFSET_KIND) :: lsize
+  !! Offset to tell where to start reading the file
 #else
   INTEGER(kind=8) :: lrepmatw2
   !! Offset to tell where to start reading the file
+  INTEGER(kind=8) :: lsize
 #endif
 
   !  
@@ -218,6 +223,10 @@
   !! real-space length for phonons, in units of alat
   REAL(kind=DP), ALLOCATABLE :: wslen_g(:)
   !! real-space length for electron-phonons, in units of alat
+  REAL(kind=DP), ALLOCATABLE :: vkk_all(:,:,:)
+  REAL(kind=DP) :: dum1, dum2, dum3, dum4, tmp
+  REAL(kind=DP), ALLOCATABLE :: trans_prob(:,:,:,:,:)
+  REAL(kind=DP), ALLOCATABLE :: trans_tmp(:,:,:,:)
   !
   COMPLEX(kind=DP) :: tablex (4*nk1+1,nkf1)
   !! Look-up table for the exponential (speed optimization) in the case of
@@ -782,21 +791,140 @@
   ENDIF
 #endif
   !  
+  ! Here is the main IBTE part
+  ! 
   IF (iterative_bte) THEN
-  ! Open the ephmatkq file here
-#if defined(__MPI)
-    filint = trim(tmp_dir)//trim(prefix)//'.epmatkq1'
-    CALL MPI_FILE_OPEN(world_comm,filint,MPI_MODE_WRONLY + MPI_MODE_CREATE,MPI_INFO_NULL,iunepmat,ierr)
-    IF( ierr /= 0 ) CALL errore( 'ephwann_shuffle', 'error in MPI_FILE_OPEN X.epmatkq1',1 )
-    ! 
-    filint = trim(tmp_dir)//trim(prefix)//'.epmatkqcb1'
-    CALL MPI_FILE_OPEN(world_comm,filint,MPI_MODE_WRONLY + MPI_MODE_CREATE,MPI_INFO_NULL,iunepmatcb,ierr)
-    IF( ierr /= 0 ) CALL errore( 'ephwann_shuffle', 'error in MPI_FILE_OPEN X.epmatkqcb1',1 )
-#endif
-    totq = 0
-    lrepmatw2 = 0
-  ENDIF
+   ! IF (epmatkqread) THEN
+    IF (.TRUE.) THEN
+   ! IF (.FALSE.) THEN
+      ! 
+      ALLOCATE( vkk_all(3,ibndmax-ibndmin+1,nkqtotf/2) )
+      ! Read velocities
+      IF (mpime.eq.ionode_id) THEN
+        !
+        OPEN(unit=iufilibtev_sup,file='IBTEvel_sup.fmt',status='old',iostat=ios)
+        READ(iufilibtev_sup,'(a)') 
+        READ(iufilibtev_sup,'(i9)') totq
+        DO ik = 1, nkqtotf/2
+          DO ibnd = 1, ibndmax-ibndmin+1
+            READ(iufilibtev_sup,'(i8,i6,3E22.12)') ktmp, itmp, vkk_all(:,ibnd,ik) 
+          ENDDO
+        ENDDO
+        !  
+      ENDIF
+      CALL mp_bcast (totq, ionode_id, world_comm)       
+      CALL mp_bcast (vkk_all, ionode_id, world_comm)       
+      ! 
+      ! Read the trans_prob and support file 
+      ALLOCATE ( trans_prob (ibndmax-ibndmin+1, ibndmax-ibndmin+1, nstemp, nkqtotf/2, totq ) )
+      trans_prob(:,:,:,:,:) = 0.0d0
+      ! 
+      IF (mpime.eq.ionode_id) THEN
+        ! Open file containing trans_prob 
+        !filint = trim(tmp_dir)//trim(prefix)//'.epmatkq1'
+        !OPEN(iunepmat,file=filint, form='unformatted')
+        filint = trim(tmp_dir)//trim(prefix)//'.epmatkq1'
+        CALL MPI_FILE_OPEN(world_comm,filint,MPI_MODE_RDONLY,MPI_INFO_NULL,iunepmat,ierr)
+        IF( ierr /= 0 ) CALL errore( 'ephwann_shuffle', 'error in MPI_FILE_OPEN X.epmatkq1',1 )
+        !
+        OPEN(iufilibte_sup,file='IBTE_sup', form='formatted') 
+        READ(iufilibte_sup,'(a)') 
+        ! 
+        lrepmatw2 = 0
+        DO iq=1, totq 
+          READ(iufilibte_sup,'(i8,4E16.6,i8)') ktmp, dum1, dum2, dum3, dum4, nbk
+          print*,'iq ',iq
+          print*,'nbk ',nbk
+          !DO ik=1, nbk
+          !  READ(iufilibte_sup,'(i8,4E16.6,i8)') ikgl, dum1, dum2, dum3, dum4
+          !ENDDO
+          !
+          ! Size of what we read
+          lsize = 2_MPI_OFFSET_KIND * INT( ibndmax-ibndmin+1  , kind =MPI_OFFSET_KIND ) * &
+                    INT( ibndmax-ibndmin+1  , kind = MPI_OFFSET_KIND ) * &
+                    INT( nstemp , kind = MPI_OFFSET_KIND ) * &
+                    INT( nbk, kind = MPI_OFFSET_KIND ) * 8_MPI_OFFSET_KIND          
+          !
+          CALL MPI_FILE_SEEK(iunepmat,lrepmatw2,MPI_SEEK_SET,ierr)
+          IF( ierr /= 0 ) CALL errore( 'print_ibte', 'error in MPI_FILE_SEEK',1 )
+          ! 
+          ! ALLOCATE THE SIZE in k-point for that q-point
+          ALLOCATE (trans_tmp(ibndmax-ibndmin+1, ibndmax-ibndmin+1, nstemp, nbk) ) 
+          trans_tmp(:,:,:,:) = 0.0d0 
+ 
+          CALL MPI_FILE_READ(iunepmat, trans_tmp(:,:,:,:), lsize, MPI_DOUBLE_PRECISION,MPI_STATUS_IGNORE,ierr)
+          IF( ierr /= 0 ) CALL errore( 'print_ibte', 'error in MPI_FILE_READ',1 )          
+          
+          !print*,'shape ',shape(trans_tmp)
+          print*,'trans_tmp ',sum(trans_tmp)
 
+          DO ik=1, nbk
+            READ(iufilibte_sup,'(i8,4E16.6,i8)') ikgl, dum1, dum2, dum3, dum4
+            trans_prob(:,:,:,ikgl,iq) = trans_tmp(:,:,:,ik)
+          ENDDO
+
+          print*,'iq trans_prob ',iq, sum(trans_prob(:,:,:,:,iq))
+
+          DEALLOCATE(trans_tmp)
+
+
+          ! Start reading for the next iteration 
+          lrepmatw2 = lrepmatw2 + 2_MPI_OFFSET_KIND * INT( ibndmax-ibndmin+1 ,kind= MPI_OFFSET_KIND ) * &
+                    INT( ibndmax-ibndmin+1  , kind = MPI_OFFSET_KIND ) * &
+                    INT( nstemp , kind = MPI_OFFSET_KIND ) * &
+                    INT( nbk, kind = MPI_OFFSET_KIND ) * 8_MPI_OFFSET_KIND
+
+          
+          !DO itemp=1, nstemp
+          !  DO ik=1, nbk
+          !    IF ( itemp == 1 ) THEN 
+          !      READ(iufilibte_sup,'(i8,4E16.6,i8)') ikgl, dum1, dum2, dum3, dum4 
+          !    ENDIF
+          !    ! 
+          !    DO ibnd = 1, ibndmax-ibndmin+1
+          !      ! 
+          !      DO jbnd = 1, ibndmax-ibndmin+1
+          !        ! 
+          !        READ(iunepmat,*) tmp   
+          !        trans_prob(jbnd,ibnd,ikgl,itemp,iq) = tmp 
+          !        ! 
+          !        print*,'ik ibnd jbnd ',ik, ibnd, jbnd, tmp
+ 
+          !        ! 
+          !      ENDDO
+          !    ENDDO
+          !  ENDDO
+          !ENDDO
+        ENDDO
+        !
+      ENDIF    
+      CALL mp_bcast (trans_prob, ionode_id, world_comm)
+      print*,'trans_prob',sum(trans_prob)
+
+      !print*,'totq ',totq
+      !print*,'vkk ',vkk_all(:,1,1)
+
+      !ALLOCATE ( trans_prob (ibndmax-ibndmin+1, ibndmax-ibndmin+1, nkftot, nstemp, nqtot )
+    
+      !CALL epmatkq_read ( trans_prob )
+      DEALLOCATE(vkk_all) 
+      STOP
+
+    ELSE
+      ! Open the ephmatkq file here
+#if defined(__MPI)
+      filint = trim(tmp_dir)//trim(prefix)//'.epmatkq1'
+      CALL MPI_FILE_OPEN(world_comm,filint,MPI_MODE_WRONLY + MPI_MODE_CREATE,MPI_INFO_NULL,iunepmat,ierr)
+      IF( ierr /= 0 ) CALL errore( 'ephwann_shuffle', 'error in MPI_FILE_OPEN X.epmatkq1',1 )
+      ! 
+      filint = trim(tmp_dir)//trim(prefix)//'.epmatkqcb1'
+      CALL MPI_FILE_OPEN(world_comm,filint,MPI_MODE_WRONLY + MPI_MODE_CREATE,MPI_INFO_NULL,iunepmatcb,ierr)
+      IF( ierr /= 0 ) CALL errore( 'ephwann_shuffle', 'error in MPI_FILE_OPEN X.epmatkqcb1',1 )
+#endif
+      totq = 0
+      lrepmatw2 = 0
+    ENDIF
+  ENDIF
   !
   ! get the size of the matrix elements stored in each pool
   ! for informational purposes.  Not necessary
@@ -1197,9 +1325,7 @@
              ! 
            ENDDO
            !
-           ! 
          ENDIF ! iq=0
-         ! 
          ! 
          IF ( .NOT. iterative_bte ) THEN  
            CALL scattering_rate_q( iq, ef0, efcb, first_cycle )
