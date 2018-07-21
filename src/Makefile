@@ -54,6 +54,7 @@ fermiwindow.o \
 gmap_sym.o \
 indabs.o \
 io_dyn_mat2.o \
+ibte.o \
 kfold.o \
 kpointdivision.o \
 kpoint_grid_epw.o \
@@ -69,6 +70,8 @@ plot_band.o \
 poolgather.o \
 print_clock_epw.o \
 print_gkk.o \
+print_ibte.o \
+print_mob.o \
 readdvscf.o \
 readgmap.o \
 readmat_shuffle2.o \

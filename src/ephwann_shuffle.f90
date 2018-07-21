@@ -228,7 +228,9 @@
   REAL(kind=DP), ALLOCATABLE :: wkf_all(:)
   REAL(kind=DP) :: dum1, dum2, dum3, dum4, tmp
   REAL(kind=DP), ALLOCATABLE :: trans_prob(:,:,:,:,:)
+  REAL(kind=DP), ALLOCATABLE :: trans_probcb(:,:,:,:,:)
   REAL(kind=DP), ALLOCATABLE :: trans_tmp(:,:,:,:)
+  REAL(kind=DP), ALLOCATABLE :: trans_tmpcb(:,:,:,:)
   !
   COMPLEX(kind=DP) :: tablex (4*nk1+1,nkf1)
   !! Look-up table for the exponential (speed optimization) in the case of
@@ -797,8 +799,6 @@
   ! 
   IF (iterative_bte) THEN
     IF (epmatkqread) THEN
-   ! IF (.TRUE.) THEN
-   ! IF (.FALSE.) THEN
       ! 
       ALLOCATE( vkk_all(3,ibndmax-ibndmin+1,nkqtotf/2) )
       ALLOCATE( wkf_all(nkqtotf/2) )
@@ -811,7 +811,7 @@
         READ(iufilibtev_sup,'(i9)') totq
         READ(iufilibtev_sup,'(a)') 
         DO itemp=1, nstemp
-          READ(iufilibtev_sup,'(i8,E22.12)') dum1, ef0(itemp)
+          READ(iufilibtev_sup,'(i8,2E22.12)') dum1, ef0(itemp), efcb(itemp)
         ENDDO
         READ(iufilibtev_sup,'(a)') 
         ! 
@@ -830,16 +830,19 @@
       ! 
       ! Read the trans_prob and support file 
       ALLOCATE ( trans_prob (ibndmax-ibndmin+1, ibndmax-ibndmin+1, nstemp, nkqtotf/2, totq ) )
+      ALLOCATE ( trans_probcb (ibndmax-ibndmin+1, ibndmax-ibndmin+1, nstemp, nkqtotf/2, totq ) )
       trans_prob(:,:,:,:,:) = 0.0d0
+      trans_probcb(:,:,:,:,:) = 0.0d0
       ! 
       IF (mpime.eq.ionode_id) THEN
         ! Open file containing trans_prob 
-        !filint = trim(tmp_dir)//trim(prefix)//'.epmatkq1'
-        !OPEN(iunepmat,file=filint, form='unformatted')
         filint = trim(tmp_dir)//trim(prefix)//'.epmatkq1'
-        !CALL MPI_FILE_OPEN(world_comm,filint,MPI_MODE_RDONLY,MPI_INFO_NULL,iunepmat,ierr)
         CALL MPI_FILE_OPEN(MPI_COMM_SELF,filint,MPI_MODE_RDONLY,MPI_INFO_NULL,iunepmat,ierr)
         IF( ierr /= 0 ) CALL errore( 'ephwann_shuffle', 'error in MPI_FILE_OPEN X.epmatkq1',1 )
+        !
+        filint = trim(tmp_dir)//trim(prefix)//'.epmatkqcb1'
+        CALL MPI_FILE_OPEN(MPI_COMM_SELF,filint,MPI_MODE_RDONLY,MPI_INFO_NULL,iunepmatcb,ierr)
+        IF( ierr /= 0 ) CALL errore( 'ephwann_shuffle', 'error in MPI_FILE_OPEN X.epmatkqcb1',1 )
         !
         OPEN(iufilibte_sup,file='IBTE_sup', form='formatted') 
         READ(iufilibte_sup,'(a)') 
@@ -861,64 +864,50 @@
                     INT( nbk, kind = MPI_OFFSET_KIND ) 
           !
           CALL MPI_FILE_SEEK(iunepmat,lrepmatw2,MPI_SEEK_SET,ierr)
-          IF( ierr /= 0 ) CALL errore( 'print_ibte', 'error in MPI_FILE_SEEK',1 )
+          IF( ierr /= 0 ) CALL errore( 'ephwann_shuffle', 'error in MPI_FILE_SEEK',1 )
+          ! 
+          ! Do CB
+          CALL MPI_FILE_SEEK(iunepmatcb,lrepmatw2,MPI_SEEK_SET,ierr)
+          IF( ierr /= 0 ) CALL errore( 'ephwann_shuffle', 'error in MPI_FILE_SEEK',1 )      
+
           ! 
           ! ALLOCATE THE SIZE in k-point for that q-point
           ALLOCATE (trans_tmp(ibndmax-ibndmin+1, ibndmax-ibndmin+1, nstemp, nbk) ) 
+          ALLOCATE (trans_tmpcb(ibndmax-ibndmin+1, ibndmax-ibndmin+1, nstemp, nbk) ) 
           trans_tmp(:,:,:,:) = 0.0d0 
+          trans_tmpcb(:,:,:,:) = 0.0d0 
  
           CALL MPI_FILE_READ(iunepmat, trans_tmp(:,:,:,:), lsize, MPI_DOUBLE_PRECISION,MPI_STATUS_IGNORE,ierr)
-          IF( ierr /= 0 ) CALL errore( 'print_ibte', 'error in MPI_FILE_READ',1 )          
+          IF( ierr /= 0 ) CALL errore( 'ephwann_shuffle', 'error in MPI_FILE_READ',1 )          
+          CALL MPI_FILE_READ(iunepmatcb, trans_tmpcb(:,:,:,:),lsize,MPI_DOUBLE_PRECISION,MPI_STATUS_IGNORE,ierr)
+          IF( ierr /= 0 ) CALL errore( 'ephwann_shuffle', 'error in MPI_FILE_READ',1 ) 
           
           DO ik=1, nbk
             READ(iufilibte_sup,'(i8,4E16.6,i8)') ikgl, dum1, dum2, dum3, dum4
             trans_prob(:,:,:,ikgl,iq) = trans_tmp(:,:,:,ik)
+            trans_probcb(:,:,:,ikgl,iq) = trans_tmpcb(:,:,:,ik)
           ENDDO
-
-          !print*,'iq trans_prob ', sum(trans_prob(:,:,1,1,:))
+          !print*,'iq trans_prob   ',iq, sum(trans_prob)
+          !print*,'iq trans_probcb ',iq, sum(trans_probcb)
+          ! 
           DEALLOCATE(trans_tmp)
-
+          DEALLOCATE(trans_tmpcb)
+          ! 
           ! Start reading for the next iteration 
           lrepmatw2 = lrepmatw2 +  INT( ibndmax-ibndmin+1 ,kind= MPI_OFFSET_KIND ) * &
                     INT( ibndmax-ibndmin+1  , kind = MPI_OFFSET_KIND ) * &
                     INT( nstemp , kind = MPI_OFFSET_KIND ) * &
                     INT( nbk, kind = MPI_OFFSET_KIND ) * 8_MPI_OFFSET_KIND
-
-          !DO itemp=1, nstemp
-          !  DO ik=1, nbk
-          !    IF ( itemp == 1 ) THEN 
-          !      READ(iufilibte_sup,'(i8,4E16.6,i8)') ikgl, dum1, dum2, dum3, dum4 
-          !    ENDIF
-          !    ! 
-          !    DO ibnd = 1, ibndmax-ibndmin+1
-          !      ! 
-          !      DO jbnd = 1, ibndmax-ibndmin+1
-          !        ! 
-          !        READ(iunepmat,*) tmp   
-          !        trans_prob(jbnd,ibnd,ikgl,itemp,iq) = tmp 
-          !        ! 
-          !        print*,'ik ibnd jbnd ',ik, ibnd, jbnd, tmp
- 
-          !        ! 
-          !      ENDDO
-          !    ENDDO
-          !  ENDDO
-          !ENDDO
+          !
         ENDDO
         !
       ENDIF ! master node
       CALL mp_bcast (trans_prob, ionode_id, world_comm)
-      !print*,'trans_prob',sum(trans_prob)
+      CALL mp_bcast (trans_probcb, ionode_id, world_comm)
 
 
-      CALL ibte(totq, etf_all, vkk_all, wkf_all, trans_prob, ef0)
+      CALL ibte(totq, etf_all, vkk_all, wkf_all, trans_prob, ef0, trans_probcb, efcb)
 
-      !print*,'totq ',totq
-      !print*,'vkk ',vkk_all(:,1,1)
-
-      !ALLOCATE ( trans_prob (ibndmax-ibndmin+1, ibndmax-ibndmin+1, nkftot, nstemp, nqtot )
-    
-      !CALL epmatkq_read ( trans_prob )
       DEALLOCATE(vkk_all) 
       DEALLOCATE(wkf_all) 
       DEALLOCATE(etf_all) 

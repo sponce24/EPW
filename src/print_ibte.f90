@@ -200,7 +200,7 @@
         ! matter if fstick is large enough.
         IF ( ( minval ( abs(etf (:, ikk) - ef) ) .lt. fsthick ) .AND. &
              ( minval ( abs(etf (:, ikq) - ef) ) .lt. fsthick ) ) THEN
-           IF(ik==1) print*,'We are in ',iq
+     !      IF(ik==1) print*,'We are in ',iq
           
     !      IF ( itemp == 1 ) THEN   
             ! Number of k-points for that cpu for that q-points
@@ -429,7 +429,7 @@
       ikk = 2 * ik - 1
       ! 
       wkf_all( ik+lower_bnd -1 ) = wkf(ikk) 
-
+      ! 
       DO ibnd = 1, ibndmax-ibndmin+1
         IF ( vme ) THEN
           vkk_all(:, ibnd, ik + lower_bnd - 1) = REAL (vmef (:, ibndmin-1+ibnd, ibndmin-1+ibnd, ikk))
@@ -452,9 +452,9 @@
       OPEN(iufilibtev_sup,file='IBTEvel_sup.fmt', form='formatted')
       WRITE(iufilibtev_sup,'(a)') '# Total q  '
       WRITE(iufilibtev_sup,'(i9)') totq
-      WRITE(iufilibtev_sup,'(a)') '# itemp    ef0  '
+      WRITE(iufilibtev_sup,'(a)') '# itemp    ef0    efcb'
       DO itemp=1, nstemp
-        WRITE(iufilibtev_sup,'(i8,E22.12)') itemp, ef0(itemp)
+        WRITE(iufilibtev_sup,'(i8,2E22.12)') itemp, ef0(itemp), efcb(itemp)
       ENDDO
       WRITE(iufilibtev_sup,'(a)') '# ik  ibnd      velocity (x,y,z)              eig     weight '
       DO ik = 1, nkqtotf/2
