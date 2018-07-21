@@ -59,7 +59,7 @@
                             scattering_0rta, longrange, shortrange, scatread, &
                             restart_filq, prtgkk, nel, meff, epsiHEG, lphase, &
                             omegamin, omegamax, omegastep, n_r, lindabs, &
-                            mob_maxiter
+                            mob_maxiter, epmatkqread
   USE elph2,         ONLY : elph
   USE start_k,       ONLY : nk1, nk2, nk3
   USE constants_epw, ONLY : ryd2mev, ryd2ev, ev2cmm1, kelvin2eV
@@ -110,7 +110,7 @@
        wmin, wmax, nw, eps_acustic, a2f, nest_fn, plselfen,                    & 
        elecselfen, phonselfen,                                                 &
        rand_q, rand_nq, rand_k, rand_nk, specfun_pl,                           &
-       nqf1, nqf2, nqf3, nkf1, nkf2, nkf3,                                     &
+       nqf1, nqf2, nqf3, nkf1, nkf2, nkf3, epmatkqread,                                     &
        mp_mesh_k, mp_mesh_q, filqf, filkf, ephwrite,                           & 
        band_plot, degaussq, delta_qsmear, nqsmear, nqstep,                     &
        nswfc, nswc, nswi, pwc, wsfc, wscut, system_2d,                         &
@@ -480,6 +480,7 @@
   n_r        = 1.d0
   lindabs    = .false.
   mob_maxiter= 50
+  epmatkqread = .false.
   !
   !     reading the namelist inputepw
   !

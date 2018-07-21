@@ -246,6 +246,7 @@
   !! if .true. then fix the gauge when diagonalizing the interpolated dynamical matrix and electronic Hamiltonian. 
   LOGICAL :: lindabs
   !! if .true., perform phonon-assisted absorption calculations
+  LOGICAL :: epmatkqread
   !
   ! Superconductivity
   LOGICAL :: ephwrite

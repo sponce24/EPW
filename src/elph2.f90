@@ -83,7 +83,8 @@
        omegap(:),              &!  Photon energy for phonon-assisted absorption
        alpha_abs(:,:)           !  Imaginary part of dielectric function for phonon-assisted absorption 
   REAL(KIND=DP) ::             &!
-       efnew                    !  SP: Fermi level on the fine grid. Added globaly for efficiency reason 
+       efnew,                  &  !  SP: Fermi level on the fine grid. Added globaly for efficiency reason 
+       tmp
   INTEGER ::                   &!
        nkqf,                   &!  number of k+q points per pool (fine grid)
        nkf,                    &!  number of k points per pool (fine grid)

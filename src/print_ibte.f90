@@ -23,7 +23,7 @@
   USE pwcom,         ONLY : ef
   USE elph2,         ONLY : ibndmax, ibndmin, etf, nkqf, nkf, dmef, vmef, wf, wqf, & 
                             epf17, nqtotf, nkqtotf, inv_tau_all, inv_tau_allcb, &
-                            xqf, zi_allvb, zi_allcb, xkf, wkf, dmef, vmef
+                            xqf, zi_allvb, zi_allcb, xkf, wkf, dmef, vmef, tmp
   USE transportcom,  ONLY : transp_temp, lower_bnd
   USE constants_epw, ONLY : zero, one, two, pi, ryd2mev, kelvin2eV, ryd2ev, & 
                             eps6, eps10
@@ -85,7 +85,7 @@
   INTEGER :: ierr
 
   !
-  REAL(kind=DP) :: tmp
+  !REAL(kind=DP) :: tmp
   !! Temporary variable to store real part of Sigma for the degenerate average
   REAL(kind=DP) :: tmp2
   !! Temporary variable for zi_all
@@ -134,7 +134,7 @@
   REAL(KIND=DP) :: wkf_all(nkqtotf/2)
   REAL(KIND=DP) :: vkk_all(3,ibndmax-ibndmin+1,nkqtotf/2)
   !
-  REAL(KIND=DP), ALLOCATABLE :: etf_all(:,:)
+  REAL(KIND=DP) :: etf_all(ibndmax-ibndmin+1,nkqtotf/2)
   !! Eigen-energies on the fine grid collected from all pools in parallel case
   REAL(KIND=DP), EXTERNAL :: DDOT
   !! Dot product function
@@ -148,8 +148,6 @@
   !! Tolerence parameter for the velocity
   REAL(kind=DP), PARAMETER :: eps2 = 0.01/ryd2mev
   !! Tolerence
-  ! 
-
   ! 
   IF ( iq .eq. 1 ) THEN
     !
@@ -172,15 +170,18 @@
   IF (first_cycle) THEN
     first_cycle = .FALSE.
   ELSE
-
-    k_all(:) = 0 
-    xkf_all(:,:) = 0.0d0
-    wkf_all(:) = 0.0d0
+    ! 
+    !k_all(:) = 0 
+    !xkf_all(:,:) = 0.0d0
+    !wkf_all(:) = 0.0d0
     trans_prob(:,:,:,:) = 0.0d0
     trans_probcb(:,:,:,:) = 0.0d0
-
+    ! 
     ! loop over temperatures
     DO itemp = 1, nstemp
+      k_all(:) = 0 
+      xkf_all(:,:) = 0.0d0
+      wkf_all(:) = 0.0d0
       !
       etemp = transp_temp(itemp)
       !
@@ -190,7 +191,6 @@
       inv_etemp = 1.0/etemp
       inv_degaussw = 1.0/degaussw
       !  
-      !
       DO ik = 1, nkf
         !
         ikk = 2 * ik - 1
@@ -200,8 +200,9 @@
         ! matter if fstick is large enough.
         IF ( ( minval ( abs(etf (:, ikk) - ef) ) .lt. fsthick ) .AND. &
              ( minval ( abs(etf (:, ikq) - ef) ) .lt. fsthick ) ) THEN
+           IF(ik==1) print*,'We are in ',iq
           
-          IF ( itemp == 1 ) THEN   
+    !      IF ( itemp == 1 ) THEN   
             ! Number of k-points for that cpu for that q-points
             ! This is temperature indepdendent
             k_all(my_pool_id+1) = k_all(my_pool_id+1) + 1 
@@ -209,7 +210,7 @@
             xkf_all(:, ik+lower_bnd - 1 ) = xkf(:,ikk)
             wkf_all(ik+lower_bnd - 1 ) = wkf(ikk)
             ! 
-          ENDIF
+     !     ENDIF
           !
           DO imode = 1, nmodes
             !
@@ -329,39 +330,50 @@
         !
       ENDDO ! end loop on k
     ENDDO ! itemp
+
+    !if (iq==1) tmp = 0
+    !tmp = tmp + sum(trans_prob(:,:,1,1))
+    !print*,'iq trans_prob ',iq, tmp
     !
     ! If the q-point is taken, write on file
     CALL mp_sum( k_all,    world_comm )
     IF ( sum(k_all) > 0 ) THEN
+      ! 
+      !if (iq==1) tmp = 0
+      !tmp = tmp + sum(trans_prob(:,:,:,:))
+      !print*,'iq trans_prob ',iq, tmp
       !
       totq = totq + 1
       ! 
       ! Size of what we write
-      lsize = 2_MPI_OFFSET_KIND * INT( ibndmax-ibndmin+1  , kind =MPI_OFFSET_KIND ) * &
+      lsize =       INT( ibndmax-ibndmin+1  , kind =MPI_OFFSET_KIND ) * &
                     INT( ibndmax-ibndmin+1  , kind = MPI_OFFSET_KIND ) * &
                     INT( nstemp , kind = MPI_OFFSET_KIND ) * &
-                    INT( k_all(my_pool_id+1) , kind = MPI_OFFSET_KIND ) * 8_MPI_OFFSET_KIND
+                    INT( k_all(my_pool_id+1) , kind = MPI_OFFSET_KIND )
 
       ! Offset where we need to start writing (we increment for each q-points)
-      lrepmatw = lrepmatw2 + 2_MPI_OFFSET_KIND * INT( ibndmax-ibndmin+1  , kind = MPI_OFFSET_KIND ) * &
+      lrepmatw = lrepmatw2 + INT( ibndmax-ibndmin+1  , kind = MPI_OFFSET_KIND ) * &
                     INT( ibndmax-ibndmin+1  , kind = MPI_OFFSET_KIND ) * &
                     INT( nstemp , kind = MPI_OFFSET_KIND ) * &
-                    INT( SUM( k_all(1:my_pool_id+1) - k_all(1) ), kind = MPI_OFFSET_KIND )*8_MPI_OFFSET_KIND
+                    INT( SUM( k_all(1:my_pool_id+1)) - k_all(my_pool_id+1), kind = MPI_OFFSET_KIND ) * 8_MPI_OFFSET_KIND
 
       
       !print*,'my_pool_id ',my_pool_id
-      !print*,'k_all ',k_all 
+      !print*,'k_all(my_pool_id+1) ',k_all(my_pool_id+1)
+      !print*,'SUM( k_all(1:my_pool_id+1) - k_all(1) ',my_pool_id+1, SUM( k_all(1:my_pool_id+1)) - k_all(my_pool_id+1)
+      !  
       !print*,'lrepmatw ',lrepmatw
+      !FLUSH 6
       !print*,'lsize ',lsize
       !print*,'iq totq size k_all ',iq, totq, lrepmatw, k_all
       ! 
-      CALL MPI_FILE_SEEK(iunepmat,lrepmatw,MPI_SEEK_SET,ierr) 
+      CALL MPI_FILE_SEEK(iunepmat, lrepmatw,MPI_SEEK_SET,ierr) 
       IF( ierr /= 0 ) CALL errore( 'print_ibte', 'error in MPI_FILE_SEEK',1 )
       ! 
       CALL MPI_FILE_WRITE(iunepmat, trans_prob, lsize, MPI_DOUBLE_PRECISION,MPI_STATUS_IGNORE,ierr)
       IF( ierr /= 0 ) CALL errore( 'print_ibte', 'error in MPI_FILE_WRITE',1 )      
       ! 
-      CALL MPI_FILE_SEEK(iunepmatcb,lrepmatw,MPI_SEEK_SET,ierr) 
+      CALL MPI_FILE_SEEK(iunepmatcb, lrepmatw,MPI_SEEK_SET,ierr) 
       IF( ierr /= 0 ) CALL errore( 'print_ibte', 'error in MPI_FILE_SEEK',1 )
       ! 
       CALL MPI_FILE_WRITE(iunepmatcb, trans_probcb, lsize, MPI_DOUBLE_PRECISION,MPI_STATUS_IGNORE,ierr)
@@ -369,12 +381,10 @@
       ! 
       ! 
       ! Offset for the next q iteration
-      lrepmatw2 = lrepmatw2 + 2_MPI_OFFSET_KIND * INT( ibndmax-ibndmin+1  ,kind= MPI_OFFSET_KIND ) * &
+      lrepmatw2 = lrepmatw2 + INT( ibndmax-ibndmin+1  ,kind= MPI_OFFSET_KIND ) * &
                     INT( ibndmax-ibndmin+1  , kind = MPI_OFFSET_KIND ) * &
                     INT( nstemp , kind = MPI_OFFSET_KIND ) * &
-                    INT( SUM( k_all(:) ), kind = MPI_OFFSET_KIND )*8_MPI_OFFSET_KIND
-
-
+                    INT( SUM( k_all(:) ), kind = MPI_OFFSET_KIND ) * 8_MPI_OFFSET_KIND
       ! 
       ! now write in the support file
       CALL mp_sum(xkf_all, world_comm)
@@ -385,7 +395,7 @@
         !print*,'iq ',iq
         !print*,'k_all ',k_all
         !print*,'wkf_all ',wkf_all 
-        
+       !  print*,'lrepmatw2 ',lrepmatw2
 
         IF (totq == 1 ) THEN
           OPEN(iufilibte_sup,file='IBTE_sup', form='formatted')
@@ -403,8 +413,8 @@
         ENDDO 
       ENDIF
       ! For DEBUG
-      print*,'iq ',totq, 'shape ',shape(trans_prob), 'nbk ',k_all
-      print*, ' trans_prob ',sum(trans_prob)
+      !print*,'iq ',totq, 'shape ',shape(trans_prob), 'nbk ',k_all
+      !print*, ' trans_prob ',sum(trans_prob)
         
       !  
     ENDIF 
@@ -412,30 +422,44 @@
   ENDIF ! first_cycle
   ! 
   IF ( iq .eq. nqtotf ) THEN
+    wkf_all(:) = 0.0d0
     ! Computes the k-velocity
     DO ik = 1, nkf
       !
       ikk = 2 * ik - 1
+      ! 
+      wkf_all( ik+lower_bnd -1 ) = wkf(ikk) 
+
       DO ibnd = 1, ibndmax-ibndmin+1
         IF ( vme ) THEN
           vkk_all(:, ibnd, ik + lower_bnd - 1) = REAL (vmef (:, ibndmin-1+ibnd, ibndmin-1+ibnd, ikk))
         ELSE
           vkk_all(:,ibnd, ik + lower_bnd -1 ) = 2.0 * REAL (dmef (:, ibndmin-1+ibnd, ibndmin-1+ibnd, ikk))
         ENDIF  
+        etf_all(ibnd, ik+lower_bnd-1) = etf(ibndmin-1+ibnd, ikk)
+        !print*,'etf ',ik, ibnd, etf(ibndmin-1+ibnd, ikk) 
       ENDDO
     ENDDO 
     ! 
     CALL mp_sum ( vkk_all, world_comm ) 
+    CALL mp_sum ( etf_all, world_comm ) 
+    CALL mp_sum ( wkf_all, world_comm )
     ! 
     IF ( my_pool_id == 0 ) THEN
+
       ! Now write total number of q-point inside and k-velocity
       !
       OPEN(iufilibtev_sup,file='IBTEvel_sup.fmt', form='formatted')
-      WRITE(iufilibtev_sup,'(a)') '# Total q then   ik  ibnd      velocity (x,y,z)'
+      WRITE(iufilibtev_sup,'(a)') '# Total q  '
       WRITE(iufilibtev_sup,'(i9)') totq
+      WRITE(iufilibtev_sup,'(a)') '# itemp    ef0  '
+      DO itemp=1, nstemp
+        WRITE(iufilibtev_sup,'(i8,E22.12)') itemp, ef0(itemp)
+      ENDDO
+      WRITE(iufilibtev_sup,'(a)') '# ik  ibnd      velocity (x,y,z)              eig     weight '
       DO ik = 1, nkqtotf/2
         DO ibnd = 1, ibndmax-ibndmin+1
-          WRITE(iufilibtev_sup,'(i8,i6,3E22.12)') ik, ibnd, vkk_all(:,ibnd,ik)
+          WRITE(iufilibtev_sup,'(i8,i6,5E22.12)') ik, ibnd, vkk_all(:,ibnd,ik), etf_all(ibnd, ik), wkf_all(ik)
         ENDDO
       ENDDO
       ! 

@@ -40,7 +40,7 @@
                             scattering, nstemp, int_mob, scissor, carrier,      &
                             iterative_bte, longrange, scatread, nqf1, prtgkk,   &
                             nqf2, nqf3, mp_mesh_k, restart, ncarrier, plselfen, &
-                            specfun_pl, lindabs, mob_maxiter
+                            specfun_pl, lindabs, mob_maxiter, epmatkqread
   USE noncollin_module, ONLY : noncolin
   USE constants_epw, ONLY : ryd2ev, ryd2mev, one, two, eps2, zero, czero,       &
                             twopi, ci, kelvin2eV, eps6
@@ -55,7 +55,7 @@
                             wkf, dynq, nqtotf, nkqf, epf17, nkf, nqf, et_ks,    &
                             ibndmin, ibndmax, lambda_all, dmec, dmef, vmef,     &
                             sigmai_all, sigmai_mode, gamma_all, epsi, zstar,    &
-                            efnew, sigmar_all, zi_all, nkqtotf, eps_rpa,        &
+                            efnew, sigmar_all, zi_all, eps_rpa,        &
                             nkqtotf, sigmar_all, zi_allvb, inv_tau_all, Fi_all, &
                             F_current, F_SERTA, inv_tau_allcb, zi_allcb, exband,&
                             Fi_allcb, F_currentcb, F_SERTAcb, BZtoIBZ, s_BZtoIBZ
@@ -82,7 +82,8 @@
 #if defined(__MPI)
   USE parallel_include, ONLY: MPI_MODE_RDONLY, MPI_INFO_NULL, MPI_MODE_WRONLY, &
                               MPI_MODE_CREATE, MPI_MODE_RDWR, MPI_OFFSET_KIND, &
-                              MPI_SEEK_SET, MPI_STATUS_IGNORE, MPI_DOUBLE_PRECISION
+                              MPI_SEEK_SET, MPI_STATUS_IGNORE, MPI_DOUBLE_PRECISION, &
+                              MPI_COMM_SELF
 #endif
   !
   implicit none
@@ -224,6 +225,7 @@
   REAL(kind=DP), ALLOCATABLE :: wslen_g(:)
   !! real-space length for electron-phonons, in units of alat
   REAL(kind=DP), ALLOCATABLE :: vkk_all(:,:,:)
+  REAL(kind=DP), ALLOCATABLE :: wkf_all(:)
   REAL(kind=DP) :: dum1, dum2, dum3, dum4, tmp
   REAL(kind=DP), ALLOCATABLE :: trans_prob(:,:,:,:,:)
   REAL(kind=DP), ALLOCATABLE :: trans_tmp(:,:,:,:)
@@ -794,26 +796,37 @@
   ! Here is the main IBTE part
   ! 
   IF (iterative_bte) THEN
-   ! IF (epmatkqread) THEN
-    IF (.TRUE.) THEN
+    IF (epmatkqread) THEN
+   ! IF (.TRUE.) THEN
    ! IF (.FALSE.) THEN
       ! 
       ALLOCATE( vkk_all(3,ibndmax-ibndmin+1,nkqtotf/2) )
+      ALLOCATE( wkf_all(nkqtotf/2) )
+      ALLOCATE( etf_all(ibndmax-ibndmin+1,nkqtotf/2) )
       ! Read velocities
       IF (mpime.eq.ionode_id) THEN
         !
         OPEN(unit=iufilibtev_sup,file='IBTEvel_sup.fmt',status='old',iostat=ios)
         READ(iufilibtev_sup,'(a)') 
         READ(iufilibtev_sup,'(i9)') totq
+        READ(iufilibtev_sup,'(a)') 
+        DO itemp=1, nstemp
+          READ(iufilibtev_sup,'(i8,E22.12)') dum1, ef0(itemp)
+        ENDDO
+        READ(iufilibtev_sup,'(a)') 
+        ! 
         DO ik = 1, nkqtotf/2
           DO ibnd = 1, ibndmax-ibndmin+1
-            READ(iufilibtev_sup,'(i8,i6,3E22.12)') ktmp, itmp, vkk_all(:,ibnd,ik) 
+            READ(iufilibtev_sup,'(i8,i6,5E22.12)') ktmp, itmp, vkk_all(:,ibnd,ik), etf_all(ibnd,ik), wkf_all(ik) 
           ENDDO
         ENDDO
         !  
       ENDIF
+      ! 
       CALL mp_bcast (totq, ionode_id, world_comm)       
       CALL mp_bcast (vkk_all, ionode_id, world_comm)       
+      CALL mp_bcast (wkf_all, ionode_id, world_comm)       
+      CALL mp_bcast (etf_all, ionode_id, world_comm)       
       ! 
       ! Read the trans_prob and support file 
       ALLOCATE ( trans_prob (ibndmax-ibndmin+1, ibndmax-ibndmin+1, nstemp, nkqtotf/2, totq ) )
@@ -824,7 +837,8 @@
         !filint = trim(tmp_dir)//trim(prefix)//'.epmatkq1'
         !OPEN(iunepmat,file=filint, form='unformatted')
         filint = trim(tmp_dir)//trim(prefix)//'.epmatkq1'
-        CALL MPI_FILE_OPEN(world_comm,filint,MPI_MODE_RDONLY,MPI_INFO_NULL,iunepmat,ierr)
+        !CALL MPI_FILE_OPEN(world_comm,filint,MPI_MODE_RDONLY,MPI_INFO_NULL,iunepmat,ierr)
+        CALL MPI_FILE_OPEN(MPI_COMM_SELF,filint,MPI_MODE_RDONLY,MPI_INFO_NULL,iunepmat,ierr)
         IF( ierr /= 0 ) CALL errore( 'ephwann_shuffle', 'error in MPI_FILE_OPEN X.epmatkq1',1 )
         !
         OPEN(iufilibte_sup,file='IBTE_sup', form='formatted') 
@@ -833,17 +847,18 @@
         lrepmatw2 = 0
         DO iq=1, totq 
           READ(iufilibte_sup,'(i8,4E16.6,i8)') ktmp, dum1, dum2, dum3, dum4, nbk
-          print*,'iq ',iq
-          print*,'nbk ',nbk
+          !print*,'iq ',iq
+          !print*,'nbk ',nbk
+          !FLUSH 6
           !DO ik=1, nbk
           !  READ(iufilibte_sup,'(i8,4E16.6,i8)') ikgl, dum1, dum2, dum3, dum4
           !ENDDO
           !
           ! Size of what we read
-          lsize = 2_MPI_OFFSET_KIND * INT( ibndmax-ibndmin+1  , kind =MPI_OFFSET_KIND ) * &
+          lsize =   INT( ibndmax-ibndmin+1  , kind =MPI_OFFSET_KIND ) * &
                     INT( ibndmax-ibndmin+1  , kind = MPI_OFFSET_KIND ) * &
                     INT( nstemp , kind = MPI_OFFSET_KIND ) * &
-                    INT( nbk, kind = MPI_OFFSET_KIND ) * 8_MPI_OFFSET_KIND          
+                    INT( nbk, kind = MPI_OFFSET_KIND ) 
           !
           CALL MPI_FILE_SEEK(iunepmat,lrepmatw2,MPI_SEEK_SET,ierr)
           IF( ierr /= 0 ) CALL errore( 'print_ibte', 'error in MPI_FILE_SEEK',1 )
@@ -855,26 +870,20 @@
           CALL MPI_FILE_READ(iunepmat, trans_tmp(:,:,:,:), lsize, MPI_DOUBLE_PRECISION,MPI_STATUS_IGNORE,ierr)
           IF( ierr /= 0 ) CALL errore( 'print_ibte', 'error in MPI_FILE_READ',1 )          
           
-          !print*,'shape ',shape(trans_tmp)
-          print*,'trans_tmp ',sum(trans_tmp)
-
           DO ik=1, nbk
             READ(iufilibte_sup,'(i8,4E16.6,i8)') ikgl, dum1, dum2, dum3, dum4
             trans_prob(:,:,:,ikgl,iq) = trans_tmp(:,:,:,ik)
           ENDDO
 
-          print*,'iq trans_prob ',iq, sum(trans_prob(:,:,:,:,iq))
-
+          !print*,'iq trans_prob ', sum(trans_prob(:,:,1,1,:))
           DEALLOCATE(trans_tmp)
 
-
           ! Start reading for the next iteration 
-          lrepmatw2 = lrepmatw2 + 2_MPI_OFFSET_KIND * INT( ibndmax-ibndmin+1 ,kind= MPI_OFFSET_KIND ) * &
+          lrepmatw2 = lrepmatw2 +  INT( ibndmax-ibndmin+1 ,kind= MPI_OFFSET_KIND ) * &
                     INT( ibndmax-ibndmin+1  , kind = MPI_OFFSET_KIND ) * &
                     INT( nstemp , kind = MPI_OFFSET_KIND ) * &
                     INT( nbk, kind = MPI_OFFSET_KIND ) * 8_MPI_OFFSET_KIND
 
-          
           !DO itemp=1, nstemp
           !  DO ik=1, nbk
           !    IF ( itemp == 1 ) THEN 
@@ -897,9 +906,12 @@
           !ENDDO
         ENDDO
         !
-      ENDIF    
+      ENDIF ! master node
       CALL mp_bcast (trans_prob, ionode_id, world_comm)
-      print*,'trans_prob',sum(trans_prob)
+      !print*,'trans_prob',sum(trans_prob)
+
+
+      CALL ibte(totq, etf_all, vkk_all, wkf_all, trans_prob, ef0)
 
       !print*,'totq ',totq
       !print*,'vkk ',vkk_all(:,1,1)
@@ -908,6 +920,8 @@
     
       !CALL epmatkq_read ( trans_prob )
       DEALLOCATE(vkk_all) 
+      DEALLOCATE(wkf_all) 
+      DEALLOCATE(etf_all) 
       STOP
 
     ELSE
