@@ -21,7 +21,7 @@
   USE io_global,     ONLY : stdout
   USE cell_base,     ONLY : alat, at, omega, bg
   USE phcom,         ONLY : nmodes
-  USE epwcom,        ONLY : fsthick, & 
+  USE epwcom,        ONLY : fsthick, mob_maxiter,  & 
                             eps_acustic, degaussw, nstemp, & 
                             system_2d, int_mob, ncarrier, restart, restart_freq,&
                             mp_mesh_k, nkf1, nkf2, nkf3, vme, broyden_beta
@@ -33,7 +33,8 @@
   USE transportcom,  ONLY : transp_temp, mobilityh_save, mobilityel_save, lower_bnd, &
                             ixkqf_tr, s_BZtoIBZ_full
   USE constants_epw, ONLY : zero, one, two, pi, kelvin2eV, ryd2ev, & 
-                            electron_SI, bohr2ang, ang2cm, hbarJ, eps6, eps8, eps10
+                            electron_SI, bohr2ang, ang2cm, hbarJ, eps6, eps8, eps10, &
+                            eps2
   USE mp,            ONLY : mp_barrier, mp_sum, mp_bcast
   USE mp_global,     ONLY : inter_pool_comm, world_comm
   USE mp_world,      ONLY : mpime
@@ -62,6 +63,8 @@
   !! The Fermi level for the electron
   !
   ! Local variables
+  INTEGER :: iter
+  !! Iteration number in the IBTE
   INTEGER :: i, iiq, iq
   !! Cartesian direction index 
   INTEGER :: j
@@ -117,6 +120,14 @@
   !! SERTA solution
   REAL(kind=DP) :: F_SERTAcb(3, ibndmax-ibndmin+1, nstemp, nkqtotf/2)
   !! SERTA solution
+  REAL(kind=DP) :: F_in(3, ibndmax-ibndmin+1, nstemp, nkqtotf/2)
+  !! In solution for iteration i
+  REAL(kind=DP) :: F_out(3, ibndmax-ibndmin+1, nstemp, nkqtotf/2)
+  !! In solution for iteration i
+  REAL(kind=DP) :: F_rot(3)
+  !! Rotated Fi_all by the symmetry operation 
+  REAL(kind=DP) :: error_h
+  !! Error in the hole mobility
   REAL(kind=DP) :: tmp
   !
   REAL(kind=DP) :: xkf_tmp (3, nkqtotf)
@@ -209,8 +220,91 @@
   ENDDO
   CALL mp_sum(F_SERTA, world_comm)
   CALL mp_sum(F_SERTAcb, world_comm)
-  ! Now compute and print the hole mobility
+  ! Now compute and print the electron and hole mobility of SERTA
   CALL print_mob(F_SERTA, F_SERTAcb, BZtoIBZ, s_BZtoIBZ, vkk_all, etf_all, wkf_all, ef0, efcb)
+  ! 
+  F_in = F_SERTA
+  F_out(:,:,:,:) = zero
+  ! 
+  ! Now compute the Iterative solution for holes
+  WRITE(stdout,'(5x,a)') ' '
+  WRITE(stdout,'(5x,a)') repeat('=',67)
+  WRITE(stdout,'(5x,"Start solving iterative Boltzmann Transport Equation")')
+  WRITE(stdout,'(5x,a/)') repeat('=',67)
+  !  
+  error_h = 1000
+  iter = 1
+  DO WHILE (error_h > eps2)  
+    WRITE(stdout,'(/5x,"Iteration number:", i10," "/)') iter
+    ! 
+    IF (iter > mob_maxiter) THEN
+      WRITE(stdout,'(5x,a)') repeat('=',67)
+      WRITE(stdout,'(5x,"The iteration reached the maximum but did not converge.")')
+      WRITE(stdout,'(5x,a/)') repeat('=',67)
+      exit
+    ENDIF
+    ! 
+    DO iq=1, totq
+      DO ik = 1, nkf
+        DO itemp = 1, nstemp
+          DO ibnd = 1, ibndmax-ibndmin+1
+            DO jbnd = 1, ibndmax-ibndmin+1
+              ! 
+              CALL cryst_to_cart(1,F_in(:,jbnd,itemp,ixkqf_tr(ik,iq)),at,-1)
+              CALL dgemv( 'n', 3, 3, 1.d0,&
+                  REAL(s_BZtoIBZ_full(:,:,ik,iq), kind=DP), 3, F_in(:,jbnd,itemp,ixkqf_tr(ik,iq)),1 ,0.d0 , F_rot(:), 1 )
+              CALL cryst_to_cart(1,F_in(:,jbnd,itemp,ixkqf_tr(ik,iq)),bg,1)
+              CALL cryst_to_cart(1,F_rot,bg,1)
+              ! 
+              F_out(:, ibnd, itemp, ik+lower_bnd-1) = F_out(:, ibnd, itemp, ik+lower_bnd-1) + &
+                     two * trans_prob(jbnd, ibnd, itemp, ik+lower_bnd-1, iq) * F_rot           
+              ! 
+            ENDDO ! jbnd
+          ENDDO ! ibnd
+        ENDDO ! itemp
+      ENDDO ! ik 
+    !  print*,'iq ',iq, sum(F_out)
+    ENDDO ! iq
+    ! 
+    DO ik = 1, nkf
+      DO itemp = 1, nstemp
+        DO ibnd = 1, ibndmax-ibndmin+1
+          tmp = SUM(trans_prob(:, ibnd, itemp, ik+lower_bnd-1, :))
+          IF ( ABS(tmp) > eps10 ) THEN          
+            F_out(:, ibnd, itemp, ik+lower_bnd-1) = F_SERTA(:, ibnd, itemp, ik+lower_bnd-1) + &
+                       F_out(:, ibnd, itemp, ik+lower_bnd-1) / ( two * tmp )
+          ENDIF
+        ENDDO
+      ENDDO
+    ENDDO
+    ! 
+    CALL mp_sum(F_out, world_comm)
+    ! 
+    !print*,'F_out ',SUM(F_out)
+    CALL print_mob(F_out, F_SERTAcb, BZtoIBZ, s_BZtoIBZ, vkk_all, etf_all, wkf_all, ef0, efcb) 
+    !
+    ! Full mixing 
+    !F_in = F_out
+    ! Linear mixing
+    F_in = (1.0 - broyden_beta ) * F_in + broyden_beta * F_out 
+    F_out = zero
+    iter = iter + 1
+    ! 
+ 
+
+  ENDDO ! end of while loop
+
+
+
+
+
+
+
+
+
+
+
+
   ! 
   RETURN
   !

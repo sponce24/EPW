@@ -118,6 +118,8 @@
   inv_cell = 1.0d0/omega
   ! 
   IF (int_mob .OR. (ncarrier < -1E5)) THEN
+    Sigma(:,:)    = zero
+    ! 
     WRITE(stdout,'(/5x,a)') repeat('=',67)
     WRITE(stdout,'(5x,"Temp [K]  Fermi [eV]  Hole density [cm^-3]  Hole mobility [cm^2/Vs]")')
     WRITE(stdout,'(5x,a/)') repeat('=',67)
@@ -228,7 +230,6 @@
   ! Now electron mobility
   IF (int_mob .OR. (ncarrier > 1E5)) THEN
     ! Needed because of residual values from the hole above
-    tdf_sigma(:)  = zero
     Sigma(:,:)    = zero
     ! 
     WRITE(stdout,'(/5x,a)') repeat('=',67)
